@@ -18,7 +18,7 @@ print("🤖 ربات دانلودر اینستاگرام - نسخه VIP v4.0")
 print("=" * 60)
 
 # 🔐 اطلاعات ربات
-BOT_TOKEN = "8364910763:AAFTug5A9qya0k3NtsdQ-M_5OjV8-ODzaZE"
+BOT_TOKEN = "8364910763:AAGtyQFzRWmoXCSHp_XuVem91n2WeZeSPCc"
 ADMIN_ID = 6906387548
 FAST_CREAT_TOKEN = "6906387548:uTVkrzLDpGglShe@Api_ManagerRoBot"
 SUPPORT_USERNAME = "@meAhmad_1386"
