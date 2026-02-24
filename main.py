@@ -1,6 +1,4 @@
-import telebot
 import requests
-import sqlite3
 import random
 import time
 import os
@@ -8,13 +6,14 @@ import json
 from datetime import datetime, timedelta
 from telebot import types
 import logging
+from supabase import create_client, Client
 
 # ==================== تنظیمات لاگینگ ====================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 print("=" * 60)
-print("🤖 ربات دانلودر اینستاگرام - نسخه VIP v4.0")
+print("🤖 ربات دانلودر اینستاگرام - نسخه VIP v4.0 (Supabase)")
 print("=" * 60)
 
 # 🔐 اطلاعات ربات
@@ -25,250 +24,174 @@ SUPPORT_USERNAME = "@meAhmad_1386"
 CHANNEL_USERNAME = "@ARIANA_MOOD"
 CHANNEL_LINK = "https://t.me/ARIANA_MOOD"
 
-# 📊 دیتابیس
-DB_NAME = "instagram_bot.db"
+# 📊 اطلاعات Supabase
+SUPABASE_URL = "https://cykfcctuewglsgwarlds.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN5a2ZjY3R1ZXdnbHNnd2FybGRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE5NDQ1OTIsImV4cCI6MjA4NzUyMDU5Mn0.UPuRUmBIqBSU55ctNrOQQC1DabYNcqGWTvfx1fJijDg"
 
-# ==================== سیستم دیتابیس پیشرفته ====================
+# ==================== سیستم دیتابیس Supabase ====================
 class Database:
     def __init__(self):
         try:
-            self.conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-            self.conn.execute("PRAGMA foreign_keys = ON")
-            self.create_tables()
-            self.migrate_tables()
-            logger.info("✅ پایگاه داده با موفقیت ایجاد شد")
+            self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+            logger.info("✅ اتصال به Supabase با موفقیت برقرار شد")
         except Exception as e:
-            logger.error(f"❌ خطا در ایجاد پایگاه داده: {e}")
-    
-    def create_tables(self):
-        cursor = self.conn.cursor()
-        
-        # جدول کاربران با ستون VIP
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                user_id INTEGER PRIMARY KEY,
-                username TEXT,
-                first_name TEXT,
-                last_name TEXT,
-                join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                daily_downloads INTEGER DEFAULT 0,
-                last_download_date DATE DEFAULT NULL,
-                total_downloads INTEGER DEFAULT 0,
-                invite_code TEXT,
-                invited_by INTEGER DEFAULT 0,
-                invite_count INTEGER DEFAULT 0,
-                extra_downloads INTEGER DEFAULT 0,
-                is_banned INTEGER DEFAULT 0,
-                is_vip INTEGER DEFAULT 0,
-                vip_until DATE DEFAULT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                url TEXT,
-                type TEXT,
-                date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                success INTEGER DEFAULT 1,
-                response_time REAL
-            )
-        ''')
-        
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS required_channels (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                channel_id TEXT,
-                channel_username TEXT UNIQUE,
-                channel_link TEXT,
-                added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                is_active INTEGER DEFAULT 1
-            )
-        ''')
-        
-        self.conn.commit()
-    
-    def migrate_tables(self):
-        """مهاجرت جدول برای کاربران قدیمی"""
-        try:
-            cursor = self.conn.cursor()
-            cursor.execute("PRAGMA table_info(users)")
-            columns = [col[1] for col in cursor.fetchall()]
-            
-            # اضافه کردن ستون‌های جدید اگر وجود ندارند
-            if 'is_vip' not in columns:
-                cursor.execute('ALTER TABLE users ADD COLUMN is_vip INTEGER DEFAULT 0')
-            if 'vip_until' not in columns:
-                cursor.execute('ALTER TABLE users ADD COLUMN vip_until DATE DEFAULT NULL')
-            if 'invite_code' not in columns:
-                cursor.execute('ALTER TABLE users ADD COLUMN invite_code TEXT')
-            
-            # ایجاد invite_code برای کاربران قدیمی
-            cursor.execute('SELECT user_id FROM users WHERE invite_code IS NULL OR invite_code = ""')
-            users_without_code = cursor.fetchall()
-            
-            for user in users_without_code:
-                user_id = user[0]
-                new_invite_code = f"INV{user_id}{random.randint(1000, 9999)}"
-                cursor.execute('UPDATE users SET invite_code = ? WHERE user_id = ?', 
-                             (new_invite_code, user_id))
-            
-            # ادمین اصلی همیشه VIP باشد
-            cursor.execute('UPDATE users SET is_vip = 1 WHERE user_id = ?', (ADMIN_ID,))
-            
-            self.conn.commit()
-            logger.info(f"✅ مهاجرت دیتابیس انجام شد")
-        except Exception as e:
-            logger.error(f"⚠️ خطا در مهاجرت دیتابیس: {e}")
-    
+            logger.error(f"❌ خطا در اتصال به Supabase: {e}")
+            raise
+
+    # -------------------- کاربران --------------------
     def add_or_update_user(self, user_id, username, first_name, last_name):
         """اضافه کردن کاربر جدید یا به‌روزرسانی کاربر موجود"""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
-            existing = cursor.fetchone()
-            
+            # بررسی وجود کاربر
+            response = self.supabase.table('users').select('*').eq('user_id', user_id).execute()
+            existing = response.data
+
             if not existing:
                 # کاربر جدید
                 invite_code = f"INV{user_id}{random.randint(1000, 9999)}"
                 is_vip = 1 if user_id == ADMIN_ID else 0
-                
-                cursor.execute('''
-                    INSERT INTO users (user_id, username, first_name, last_name, invite_code, is_vip)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                ''', (user_id, username or "", first_name or "", last_name or "", invite_code, is_vip))
-                self.conn.commit()
+
+                data = {
+                    'user_id': user_id,
+                    'username': username or "",
+                    'first_name': first_name or "",
+                    'last_name': last_name or "",
+                    'invite_code': invite_code,
+                    'is_vip': is_vip,
+                    'join_date': datetime.now().isoformat(),
+                    'updated_at': datetime.now().isoformat()
+                }
+                self.supabase.table('users').insert(data).execute()
                 logger.info(f"✅ کاربر جدید اضافه شد: {user_id}")
                 return True, "new"
             else:
                 # کاربر موجود - به‌روزرسانی اطلاعات
-                cursor.execute('''
-                    UPDATE users 
-                    SET username = ?, first_name = ?, last_name = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = ?
-                ''', (username or "", first_name or "", last_name or "", user_id))
-                
+                update_data = {
+                    'username': username or "",
+                    'first_name': first_name or "",
+                    'last_name': last_name or "",
+                    'updated_at': datetime.now().isoformat()
+                }
+                self.supabase.table('users').update(update_data).eq('user_id', user_id).execute()
+
                 # بررسی و ایجاد invite_code اگر وجود ندارد
-                cursor.execute('SELECT invite_code FROM users WHERE user_id = ?', (user_id,))
-                user_data = cursor.fetchone()
-                
-                if user_data and (not user_data[0] or user_data[0] == ""):
+                user = existing[0]
+                if not user.get('invite_code'):
                     invite_code = f"INV{user_id}{random.randint(1000, 9999)}"
-                    cursor.execute('UPDATE users SET invite_code = ? WHERE user_id = ?', (invite_code, user_id))
-                
-                self.conn.commit()
+                    self.supabase.table('users').update({'invite_code': invite_code}).eq('user_id', user_id).execute()
+
                 logger.info(f"✅ کاربر به‌روز شد: {user_id}")
                 return False, "updated"
         except Exception as e:
             logger.error(f"❌ خطا در افزودن/به‌روزرسانی کاربر: {e}")
             return False, "error"
-    
+
     def is_vip(self, user_id):
         """بررسی VIP بودن کاربر"""
         try:
-            # ادمین اصلی همیشه VIP است
             if user_id == ADMIN_ID:
                 return True
-            
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT is_vip, vip_until FROM users WHERE user_id = ?', (user_id,))
-            result = cursor.fetchone()
-            
-            if result:
-                is_vip = result[0]
-                vip_until = result[1]
-                
+
+            response = self.supabase.table('users').select('is_vip, vip_until').eq('user_id', user_id).execute()
+            if response.data:
+                user = response.data[0]
+                is_vip = user.get('is_vip', 0)
+                vip_until = user.get('vip_until')
+
                 if is_vip == 1:
-                    # بررسی تاریخ انقضای VIP
                     if vip_until:
                         try:
                             vip_date = datetime.strptime(vip_until, '%Y-%m-%d').date()
                             today = datetime.now().date()
                             if vip_date < today:
                                 # VIP منقضی شده
-                                cursor.execute('UPDATE users SET is_vip = 0, vip_until = NULL WHERE user_id = ?', (user_id,))
-                                self.conn.commit()
+                                self.supabase.table('users').update({'is_vip': 0, 'vip_until': None}).eq('user_id', user_id).execute()
                                 return False
                         except:
                             pass
                     return True
             return False
-        except:
+        except Exception as e:
+            logger.error(f"❌ خطا در بررسی VIP: {e}")
             return False
-    
+
     def set_vip(self, user_id, is_vip=True, days=None):
         """تنظیم وضعیت VIP کاربر"""
         try:
-            cursor = self.conn.cursor()
-            
+            update_data = {}
             if is_vip:
-                vip_until = None
+                update_data['is_vip'] = 1
                 if days:
                     vip_until = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
-                
-                cursor.execute('''
-                    UPDATE users 
-                    SET is_vip = 1, vip_until = ?
-                    WHERE user_id = ?
-                ''', (vip_until, user_id))
+                    update_data['vip_until'] = vip_until
+                else:
+                    update_data['vip_until'] = None
             else:
-                cursor.execute('''
-                    UPDATE users 
-                    SET is_vip = 0, vip_until = NULL
-                    WHERE user_id = ?
-                ''', (user_id,))
-            
-            self.conn.commit()
+                update_data['is_vip'] = 0
+                update_data['vip_until'] = None
+
+            self.supabase.table('users').update(update_data).eq('user_id', user_id).execute()
             return True
         except Exception as e:
             logger.error(f"❌ خطا در تنظیم VIP: {e}")
             return False
-    
+
     def get_vip_users(self):
         """دریافت لیست کاربران VIP"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT user_id, username, first_name, vip_until FROM users WHERE is_vip = 1 ORDER BY vip_until DESC')
-        return cursor.fetchall()
-    
+        try:
+            response = self.supabase.table('users').select('user_id, username, first_name, vip_until').eq('is_vip', 1).order('vip_until', desc=True).execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"❌ خطا در دریافت لیست VIP: {e}")
+            return []
+
     def get_user_stats(self, user_id):
         """دریافت آمار کاربر با بررسی ریست روزانه"""
         try:
-            cursor = self.conn.cursor()
-            
+            response = self.supabase.table('users').select('*').eq('user_id', user_id).execute()
+            if not response.data:
+                return None
+
+            user = response.data[0]
+
             # ریست روزانه (فقط برای کاربران غیر VIP)
-            today = datetime.now().strftime('%Y-%m-%d')
-            cursor.execute('SELECT last_download_date, daily_downloads, is_vip FROM users WHERE user_id = ?', (user_id,))
-            user_data = cursor.fetchone()
-            
-            if user_data and user_data[0] and not self.is_vip(user_id):
-                last_date_str = user_data[0]
-                if isinstance(last_date_str, str):
-                    try:
-                        last_date = datetime.strptime(last_date_str, '%Y-%m-%d').date()
-                    except:
-                        last_date = datetime.now().date()
-                else:
-                    last_date = last_date_str
-                
-                today_date = datetime.now().date()
-                
-                if last_date != today_date:
-                    cursor.execute('''
-                        UPDATE users 
-                        SET daily_downloads = 0, 
-                            last_download_date = ?
-                        WHERE user_id = ?
-                    ''', (today, user_id))
-                    self.conn.commit()
-            
-            cursor.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
-            return cursor.fetchone()
+            today = datetime.now().date()
+            last_download_date = user.get('last_download_date')
+            if last_download_date and not self.is_vip(user_id):
+                try:
+                    last_date = datetime.strptime(last_download_date, '%Y-%m-%d').date()
+                    if last_date != today:
+                        self.supabase.table('users').update({
+                            'daily_downloads': 0,
+                            'last_download_date': today.isoformat()
+                        }).eq('user_id', user_id).execute()
+                        # به‌روزرسانی مقدار در user
+                        user['daily_downloads'] = 0
+                except:
+                    pass
+
+            return (
+                user.get('user_id'),
+                user.get('username'),
+                user.get('first_name'),
+                user.get('last_name'),
+                user.get('join_date'),
+                user.get('daily_downloads', 0),
+                user.get('last_download_date'),
+                user.get('total_downloads', 0),
+                user.get('invite_code'),
+                user.get('invited_by', 0),
+                user.get('invite_count', 0),
+                user.get('extra_downloads', 0),
+                user.get('is_banned', 0),
+                user.get('is_vip', 0),
+                user.get('vip_until'),
+                user.get('updated_at')
+            )
         except Exception as e:
             logger.error(f"❌ خطا در دریافت آمار کاربر: {e}")
             return None
-    
+
     def get_today_downloads(self, user_id):
         """تعداد دانلودهای امروز کاربر"""
         try:
@@ -278,228 +201,226 @@ class Database:
             return 0
         except:
             return 0
-    
+
     def can_download(self, user_id):
         """بررسی امکان دانلود"""
         try:
-            # کاربران VIP و ادمین محدودیتی ندارند
             if self.is_vip(user_id):
                 return True
-            
+
             current_downloads = self.get_today_downloads(user_id)
-            cursor = self.conn.cursor()
-            cursor.execute('SELECT extra_downloads FROM users WHERE user_id = ?', (user_id,))
-            extra = cursor.fetchone()
-            extra_downloads = extra[0] if extra else 0
-            
-            total_allowed = 5 + extra_downloads
+            response = self.supabase.table('users').select('extra_downloads').eq('user_id', user_id).execute()
+            extra = response.data[0].get('extra_downloads', 0) if response.data else 0
+            total_allowed = 5 + extra
             return current_downloads < total_allowed
         except:
             return False
-    
+
     def increment_download(self, user_id):
         """افزایش تعداد دانلودهای کاربر"""
         try:
-            cursor = self.conn.cursor()
-            today = datetime.now().strftime('%Y-%m-%d')
-            
-            # کاربران VIP نیازی به ثبت daily_downloads ندارند
+            today = datetime.now().date().isoformat()
+
             if not self.is_vip(user_id):
-                cursor.execute('SELECT last_download_date FROM users WHERE user_id = ?', (user_id,))
-                result = cursor.fetchone()
-                
-                if result and result[0]:
-                    last_date_str = result[0]
-                    if isinstance(last_date_str, str):
-                        try:
-                            last_date = datetime.strptime(last_date_str, '%Y-%m-%d').date()
-                        except:
-                            last_date = datetime.now().date()
-                    else:
-                        last_date = result[0]
-                    
-                    today_date = datetime.now().date()
-                    
-                    if last_date != today_date:
-                        cursor.execute('''
-                            UPDATE users 
-                            SET daily_downloads = 1, 
-                                last_download_date = ?,
-                                total_downloads = total_downloads + 1
-                            WHERE user_id = ?
-                        ''', (today, user_id))
-                    else:
-                        cursor.execute('''
-                            UPDATE users 
-                            SET daily_downloads = daily_downloads + 1,
-                                total_downloads = total_downloads + 1
-                            WHERE user_id = ?
-                        ''', (user_id,))
+                # دریافت last_download_date
+                response = self.supabase.table('users').select('last_download_date').eq('user_id', user_id).execute()
+                last_date = response.data[0].get('last_download_date') if response.data else None
+
+                if last_date != today:
+                    # روز جدید
+                    self.supabase.table('users').update({
+                        'daily_downloads': 1,
+                        'last_download_date': today,
+                        'total_downloads': self.supabase.table('users').select('total_downloads').eq('user_id', user_id).execute().data[0].get('total_downloads', 0) + 1
+                    }).eq('user_id', user_id).execute()
                 else:
-                    cursor.execute('''
-                        UPDATE users 
-                        SET daily_downloads = 1, 
-                            last_download_date = ?,
-                            total_downloads = total_downloads + 1
-                        WHERE user_id = ?
-                    ''', (today, user_id))
+                    # افزایش روزانه
+                    self.supabase.table('users').update({
+                        'daily_downloads': self.supabase.table('users').select('daily_downloads').eq('user_id', user_id).execute().data[0].get('daily_downloads', 0) + 1,
+                        'total_downloads': self.supabase.table('users').select('total_downloads').eq('user_id', user_id).execute().data[0].get('total_downloads', 0) + 1
+                    }).eq('user_id', user_id).execute()
             else:
-                # فقط total_downloads افزایش می‌یابد
-                cursor.execute('''
-                    UPDATE users 
-                    SET total_downloads = total_downloads + 1
-                    WHERE user_id = ?
-                ''', (user_id,))
-            
-            self.conn.commit()
+                # فقط total_downloads افزایش
+                current_total = self.supabase.table('users').select('total_downloads').eq('user_id', user_id).execute().data[0].get('total_downloads', 0)
+                self.supabase.table('users').update({'total_downloads': current_total + 1}).eq('user_id', user_id).execute()
+
             return True
         except Exception as e:
             logger.error(f"❌ خطا در افزایش دانلود: {e}")
             return False
-    
+
     def get_remaining_downloads(self, user_id):
         """محاسبه تعداد دانلودهای باقیمانده"""
         try:
-            # کاربران VIP و ادمین نامحدود
             if self.is_vip(user_id):
                 return 999, 0, 999
-            
+
             user_data = self.get_user_stats(user_id)
             if user_data:
-                current_downloads = user_data[5] or 0
-                extra_downloads = user_data[11] or 0
-                total_allowed = 5 + extra_downloads
-                remaining = max(0, total_allowed - current_downloads)
-                return remaining, current_downloads, total_allowed
+                current = user_data[5] or 0
+                extra = user_data[11] or 0
+                total_allowed = 5 + extra
+                remaining = max(0, total_allowed - current)
+                return remaining, current, total_allowed
             return 0, 0, 5
         except:
             return 0, 0, 5
-    
+
     def get_invite_link(self, user_id, bot_username):
         """دریافت لینک دعوت"""
         try:
-            cursor = self.conn.cursor()
-            
-            cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
-            if not cursor.fetchone():
-                self.add_or_update_user(user_id, "", "", "")
-            
-            cursor.execute('SELECT invite_code FROM users WHERE user_id = ?', (user_id,))
-            result = cursor.fetchone()
-            
-            if result and result[0]:
-                return f"https://t.me/{bot_username}?start={result[0]}"
+            response = self.supabase.table('users').select('invite_code').eq('user_id', user_id).execute()
+            if response.data and response.data[0].get('invite_code'):
+                invite_code = response.data[0]['invite_code']
             else:
-                new_invite_code = f"INV{user_id}{random.randint(1000, 9999)}"
-                cursor.execute('UPDATE users SET invite_code = ? WHERE user_id = ?', (new_invite_code, user_id))
-                self.conn.commit()
-                return f"https://t.me/{bot_username}?start={new_invite_code}"
+                invite_code = f"INV{user_id}{random.randint(1000, 9999)}"
+                self.supabase.table('users').update({'invite_code': invite_code}).eq('user_id', user_id).execute()
+            return f"https://t.me/{bot_username}?start={invite_code}"
         except Exception as e:
             logger.error(f"❌ خطا در دریافت لینک دعوت: {e}")
             return f"https://t.me/{bot_username}?start=INV{user_id}{random.randint(1000, 9999)}"
-    
+
     def add_invite_reward(self, inviter_id):
         """اضافه کردن پاداش دعوت"""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute('UPDATE users SET invite_count = invite_count + 1, extra_downloads = extra_downloads + 20 WHERE user_id = ?', (inviter_id,))
-            self.conn.commit()
-            return True
+            response = self.supabase.table('users').select('invite_count, extra_downloads').eq('user_id', inviter_id).execute()
+            if response.data:
+                current = response.data[0]
+                self.supabase.table('users').update({
+                    'invite_count': current.get('invite_count', 0) + 1,
+                    'extra_downloads': current.get('extra_downloads', 0) + 20
+                }).eq('user_id', inviter_id).execute()
+                return True
+            return False
         except Exception as e:
             logger.error(f"❌ خطا در افزودن پاداش دعوت: {e}")
             return False
-    
+
+    # -------------------- کانال‌های اجباری --------------------
     def add_required_channel(self, channel_username):
         """افزودن کانال اجباری"""
         try:
-            cursor = self.conn.cursor()
             clean_username = channel_username.replace('@', '')
             channel_link = f"https://t.me/{clean_username}"
-            
-            cursor.execute('''
-                INSERT OR REPLACE INTO required_channels (channel_username, channel_link)
-                VALUES (?, ?)
-            ''', (channel_username, channel_link))
-            self.conn.commit()
+            data = {
+                'channel_username': channel_username,
+                'channel_link': channel_link,
+                'is_active': 1
+            }
+            # استفاده از upsert (بر اساس unique constraint روی channel_username)
+            self.supabase.table('required_channels').upsert(data, on_conflict='channel_username').execute()
             return True
         except Exception as e:
             logger.error(f"❌ خطا در افزودن کانال: {e}")
             return False
-    
+
     def remove_required_channel(self, channel_username):
         """حذف کانال اجباری"""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute('DELETE FROM required_channels WHERE channel_username = ?', (channel_username,))
-            self.conn.commit()
+            self.supabase.table('required_channels').delete().eq('channel_username', channel_username).execute()
             return True
         except Exception as e:
             logger.error(f"❌ خطا در حذف کانال: {e}")
             return False
-    
+
     def get_required_channels(self):
         """دریافت کانال‌های اجباری"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM required_channels WHERE is_active = 1')
-        return cursor.fetchall()
-    
+        try:
+            response = self.supabase.table('required_channels').select('*').eq('is_active', 1).execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"❌ خطا در دریافت کانال‌ها: {e}")
+            return []
+
+    # -------------------- ثبت درخواست‌ها --------------------
     def log_request(self, user_id, url, request_type, success=True, response_time=0):
         """ثبت درخواست"""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute('INSERT INTO requests (user_id, url, type, success, response_time) VALUES (?, ?, ?, ?, ?)', 
-                          (user_id, url, request_type, success, response_time))
-            self.conn.commit()
+            data = {
+                'user_id': user_id,
+                'url': url,
+                'type': request_type,
+                'success': 1 if success else 0,
+                'response_time': response_time,
+                'date': datetime.now().isoformat()
+            }
+            self.supabase.table('requests').insert(data).execute()
             return True
         except Exception as e:
             logger.error(f"❌ خطا در ثبت درخواست: {e}")
             return False
-    
+
+    # -------------------- آمار و کاربران --------------------
     def get_all_users(self):
         """دریافت تمام کاربران"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM users ORDER BY join_date DESC')
-        return cursor.fetchall()
-    
+        try:
+            response = self.supabase.table('users').select('*').order('join_date', desc=True).execute()
+            # تبدیل به تاپل مانند قبل (برای سازگاری با کدهای موجود)
+            users = []
+            for u in response.data:
+                users.append((
+                    u.get('user_id'),
+                    u.get('username'),
+                    u.get('first_name'),
+                    u.get('last_name'),
+                    u.get('join_date'),
+                    u.get('daily_downloads', 0),
+                    u.get('last_download_date'),
+                    u.get('total_downloads', 0),
+                    u.get('invite_code'),
+                    u.get('invited_by', 0),
+                    u.get('invite_count', 0),
+                    u.get('extra_downloads', 0),
+                    u.get('is_banned', 0),
+                    u.get('is_vip', 0),
+                    u.get('vip_until'),
+                    u.get('updated_at')
+                ))
+            return users
+        except Exception as e:
+            logger.error(f"❌ خطا در دریافت همه کاربران: {e}")
+            return []
+
     def get_total_stats(self):
         """دریافت آمار کلی"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT COUNT(*) FROM users')
-        total_users = cursor.fetchone()[0] or 0
-        cursor.execute('SELECT COUNT(*) FROM requests')
-        total_requests = cursor.fetchone()[0] or 0
-        cursor.execute('SELECT SUM(total_downloads) FROM users')
-        total_downloads = cursor.fetchone()[0] or 0
-        cursor.execute('SELECT COUNT(*) FROM users WHERE is_vip = 1')
-        total_vip = cursor.fetchone()[0] or 0
-        return total_users, total_requests, total_downloads, total_vip
-    
+        try:
+            users_resp = self.supabase.table('users').select('*', count='exact').execute()
+            total_users = users_resp.count if hasattr(users_resp, 'count') else len(users_resp.data)
+
+            requests_resp = self.supabase.table('requests').select('*', count='exact').execute()
+            total_requests = requests_resp.count if hasattr(requests_resp, 'count') else len(requests_resp.data)
+
+            downloads_resp = self.supabase.table('users').select('total_downloads').execute()
+            total_downloads = sum(u.get('total_downloads', 0) for u in downloads_resp.data)
+
+            vip_resp = self.supabase.table('users').select('*', count='exact').eq('is_vip', 1).execute()
+            total_vip = vip_resp.count if hasattr(vip_resp, 'count') else len(vip_resp.data)
+
+            return total_users, total_requests, total_downloads, total_vip
+        except Exception as e:
+            logger.error(f"❌ خطا در دریافت آمار کلی: {e}")
+            return 0, 0, 0, 0
+
     def reset_user_downloads(self, user_id):
         """ریست دانلودهای کاربر"""
         try:
-            cursor = self.conn.cursor()
-            cursor.execute('UPDATE users SET daily_downloads = 0 WHERE user_id = ?', (user_id,))
-            self.conn.commit()
+            self.supabase.table('users').update({'daily_downloads': 0}).eq('user_id', user_id).execute()
             return True
         except Exception as e:
             logger.error(f"❌ خطا در ریست دانلودها: {e}")
             return False
-    
+
     def backup_database(self):
-        """پشتیبان‌گیری از دیتابیس"""
-        try:
-            if os.path.exists(DB_NAME):
-                backup_name = f"{DB_NAME}.backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                import shutil
-                shutil.copy2(DB_NAME, backup_name)
-                logger.info(f"✅ پشتیبان از دیتابیس گرفته شد: {backup_name}")
-                return backup_name
-        except Exception as e:
-            logger.error(f"❌ خطا در پشتیبان‌گیری: {e}")
+        """پشتیبان‌گیری (در Supabase معنی ندارد، می‌توان از export استفاده کرد)"""
+        logger.warning("⚠️ پشتیبان‌گیری در Supabase از طریق کد ممکن نیست. لطفاً از داشبورد Supabase استفاده کنید.")
         return None
+
+# ==================== بقیه کد بدون تغییر ====================
+# (از اینجا به بعد تمام توابع و کلاس‌ها دقیقاً مانند قبل هستند)
 
 # ایجاد اتصال دیتابیس
 db = Database()
+import telebot
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
 # ==================== سیستم عضویت اجباری هوشمند ====================
@@ -514,8 +435,8 @@ def check_subscription(user_id):
         not_joined = []
         
         for channel in required_channels:
-            channel_username = channel[2]
-            channel_link = channel[3]
+            channel_username = channel.get('channel_username')
+            channel_link = channel.get('channel_link')
             
             try:
                 clean_username = channel_username.replace('@', '')
@@ -714,20 +635,20 @@ def start_command(message):
         if len(message.text.split()) > 1:
             invite_code = message.text.split()[1]
             if invite_code.startswith("INV"):
-                cursor = db.conn.cursor()
-                cursor.execute('SELECT user_id FROM users WHERE invite_code = ?', (invite_code,))
-                inviter = cursor.fetchone()
-                
-                if inviter and inviter[0] != user.id:
-                    if db.add_invite_reward(inviter[0]):
-                        try:
-                            bot.send_message(inviter[0], 
-                                f"🎉 <b>دوست شما با لینک دعوت شما وارد شد!</b>\n\n"
-                                f"👤 کاربر: {user.first_name}\n"
-                                f"🆔 آیدی: {user.id}\n"
-                                f"🎁 <b>20 دانلود اضافی دریافت کردید!</b>")
-                        except:
-                            pass
+                # پیدا کردن inviter از طریق invite_code
+                response = db.supabase.table('users').select('user_id').eq('invite_code', invite_code).execute()
+                if response.data:
+                    inviter_id = response.data[0]['user_id']
+                    if inviter_id != user.id:
+                        if db.add_invite_reward(inviter_id):
+                            try:
+                                bot.send_message(inviter_id, 
+                                    f"🎉 <b>دوست شما با لینک دعوت شما وارد شد!</b>\n\n"
+                                    f"👤 کاربر: {user.first_name}\n"
+                                    f"🆔 آیدی: {user.id}\n"
+                                    f"🎁 <b>20 دانلود اضافی دریافت کردید!</b>")
+                            except:
+                                pass
         
         is_subscribed, not_joined = check_subscription(user.id)
         
@@ -857,9 +778,6 @@ def support_category_callback(call):
         
         cat_name = category_names.get(category, 'سایر موارد')
         
-        # ذخیره موقت دسته‌بندی در حافظه (می‌توانید از دیتابیس یا دیکشنری استفاده کنید)
-        # برای سادگی، از دیکشنری سراسری استفاده نمی‌کنیم. در عوض از register_next_step_handler استفاده می‌کنیم.
-        
         msg = bot.edit_message_text(
             f"🆘 <b>ارسال پیام به پشتیبانی</b>\n\n"
             f"📋 <b>موضوع:</b> {cat_name}\n\n"
@@ -871,7 +789,6 @@ def support_category_callback(call):
             parse_mode='HTML'
         )
         
-        # ثبت مرحله بعدی برای دریافت پیام کاربر
         bot.register_next_step_handler_by_chat_id(
             call.message.chat.id,
             lambda m: process_support_message(m, category, cat_name)
@@ -897,7 +814,6 @@ def process_support_message(message, category, category_name):
     try:
         user = message.from_user
         
-        # ارسال پیام به ادمین
         admin_text = f"""
 📨 <b>پیام پشتیبانی جدید</b>
 
@@ -910,7 +826,6 @@ def process_support_message(message, category, category_name):
 <b>📝 محتوای پیام:</b>
         """
         
-        # ارسال محتوای پیام به ادمین
         if message.content_type == 'text':
             bot.send_message(
                 ADMIN_ID,
@@ -969,7 +884,6 @@ def process_support_message(message, category, category_name):
                 parse_mode='HTML'
             )
         
-        # تایید به کاربر
         bot.send_message(
             message.chat.id,
             f"✅ <b>پیام شما با موفقیت ارسال شد!</b>\n\n"
@@ -1194,7 +1108,6 @@ def handle_messages(message):
             bot.reply_to(message, help_text, parse_mode='HTML')
         
         elif text == "🆘 پشتیبانی":
-            # فراخوانی سیستم جدید پشتیبانی
             support_category_selection(message)
         
         elif text == "👥 دعوت دوستان":
@@ -1239,7 +1152,6 @@ def handle_messages(message):
                 )
                 return
             
-            # بررسی محدودیت دانلود (فقط برای کاربران غیر VIP)
             if not db.can_download(user_id):
                 invite_link = db.get_invite_link(user_id, bot.get_me().username)
                 keyboard = types.InlineKeyboardMarkup()
@@ -1330,7 +1242,6 @@ def handle_messages(message):
                 if files_sent > 0:
                     remaining, current, total = db.get_remaining_downloads(user_id)
                     
-                    # پیام متفاوت برای VIP و عادی
                     if db.is_vip(user_id):
                         success_text = f"""
 ✨ <b>عملیات دانلود با موفقیت انجام شد!</b>
@@ -1472,7 +1383,7 @@ def handle_callbacks(call):
 📥 <b>درخواست‌ها:</b> {total_requests} بار
 ⬇️ <b>دانلودها:</b> {total_downloads} فایل
 ⭐ <b>کاربران ویژه:</b> {total_vip} نفر
-💾 <b>حافظه دیتابیس:</b> {os.path.getsize(DB_NAME) // 1024} KB
+💾 <b>حافظه دیتابیس:</b> (در Supabase قابل نمایش نیست)
 
 🕒 <b>زمان:</b> {datetime.now().strftime('%H:%M:%S')}
                 """
@@ -1492,16 +1403,12 @@ def handle_callbacks(call):
                 
                 for user in users:
                     if user[4]:
-                        if isinstance(user[4], str):
-                            try:
-                                join_date = datetime.strptime(user[4], '%Y-%m-%d %H:%M:%S').date()
-                            except:
-                                continue
-                        else:
-                            join_date = user[4]
-                        
-                        if join_date == today:
-                            today_users.append(user)
+                        try:
+                            join_date = datetime.strptime(user[4], '%Y-%m-%d %H:%M:%S').date() if isinstance(user[4], str) else user[4]
+                            if join_date == today:
+                                today_users.append(user)
+                        except:
+                            continue
                 
                 if today_users:
                     text = "👥 <b>کاربران امروز</b>\n\n"
@@ -1560,7 +1467,9 @@ def handle_callbacks(call):
                 if vip_users:
                     keyboard = types.InlineKeyboardMarkup()
                     for user in vip_users[:20]:
-                        user_id, username, first_name, vip_until = user
+                        user_id = user['user_id']
+                        username = user.get('username', '')
+                        first_name = user.get('first_name', '')
                         display_name = first_name or username or f"User {user_id}"
                         keyboard.add(types.InlineKeyboardButton(
                             f"❌ {display_name} ({user_id})", 
@@ -1607,7 +1516,10 @@ def handle_callbacks(call):
                 if vip_users:
                     text = "⭐ <b>لیست کاربران ویژه</b>\n\n"
                     for i, user in enumerate(vip_users, 1):
-                        user_id, username, first_name, vip_until = user
+                        user_id = user['user_id']
+                        username = user.get('username', '')
+                        first_name = user.get('first_name', '')
+                        vip_until = user.get('vip_until')
                         display_name = first_name or username or f"User {user_id}"
                         vip_status = f"تا {vip_until}" if vip_until else "دائمی"
                         text += f"{i}. {display_name}\n   ├ آیدی: {user_id}\n   └ وضعیت: {vip_status}\n\n"
@@ -1663,8 +1575,8 @@ def handle_callbacks(call):
                     keyboard = types.InlineKeyboardMarkup()
                     for channel in channels:
                         keyboard.add(types.InlineKeyboardButton(
-                            f"حذف {channel[2]}", 
-                            callback_data=f"del_chan_{channel[2]}"
+                            f"حذف {channel['channel_username']}", 
+                            callback_data=f"del_chan_{channel['channel_username']}"
                         ))
                     keyboard.add(types.InlineKeyboardButton("🔙 بازگشت", callback_data="admin_back"))
                     
@@ -1697,7 +1609,7 @@ def handle_callbacks(call):
                 if channels:
                     text = "📋 <b>کانال‌های اجباری</b>\n\n"
                     for chan in channels:
-                        text += f"• {chan[2]}\n  └ {chan[3]}\n"
+                        text += f"• {chan['channel_username']}\n  └ {chan['channel_link']}\n"
                 else:
                     text = "📭 <b>کانالی وجود ندارد</b>"
                 
@@ -1737,23 +1649,14 @@ def handle_callbacks(call):
                 bot.register_next_step_handler(msg, process_message_user_step1)
             
             elif call.data == "admin_backup":
-                backup_file = db.backup_database()
-                if backup_file:
-                    try:
-                        with open(backup_file, 'rb') as f:
-                            bot.send_document(
-                                call.message.chat.id,
-                                f,
-                                caption=f"💾 <b>پشتیبان دیتابیس</b>\n\n"
-                                        f"📅 تاریخ: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                                        f"📊 اندازه: {os.path.getsize(backup_file) // 1024} KB"
-                            )
-                        bot.answer_callback_query(call.id, "✅ پشتیبان ارسال شد!")
-                    except Exception as e:
-                        logger.error(f"❌ خطا در ارسال پشتیبان: {e}")
-                        bot.answer_callback_query(call.id, "❌ خطا در ارسال پشتیبان!", show_alert=True)
-                else:
-                    bot.answer_callback_query(call.id, "❌ خطا در ایجاد پشتیبان!", show_alert=True)
+                db.backup_database()
+                bot.send_message(
+                    call.message.chat.id,
+                    "⚠️ <b>پشتیبان‌گیری در Supabase از طریق کد ممکن نیست.</b>\n\n"
+                    "لطفاً از داشبورد Supabase برای پشتیبان‌گیری استفاده کنید.",
+                    parse_mode='HTML'
+                )
+                bot.answer_callback_query(call.id, "❌ امکان پشتیبان‌گیری وجود ندارد", show_alert=True)
             
             elif call.data == "admin_restart":
                 bot.answer_callback_query(call.id, "🔄 ربات در حال بازخوانی...")
@@ -1763,9 +1666,6 @@ def handle_callbacks(call):
                     f"🕒 زمان: {datetime.now().strftime('%H:%M:%S')}",
                     parse_mode='HTML'
                 )
-        
-        # اگر کالبک مربوط به پشتیبانی بود و اینجا پردازش نشد، در تابع جداگانه هندل می‌شود.
-        # این بخش فقط برای پنل ادمین و بررسی عضویت است.
         
         bot.answer_callback_query(call.id)
     except Exception as e:
@@ -1788,10 +1688,8 @@ def process_add_vip(message):
         user_id = int(message.text)
         
         # بررسی وجود کاربر
-        cursor = db.conn.cursor()
-        cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
-        if not cursor.fetchone():
-            # اگر کاربر وجود ندارد، اضافه کن
+        response = db.supabase.table('users').select('user_id').eq('user_id', user_id).execute()
+        if not response.data:
             db.add_or_update_user(user_id, "", "", "")
         
         if db.set_vip(user_id, True):
@@ -1846,10 +1744,8 @@ def process_set_vip_time(message):
         user_id = int(parts[0])
         days = int(parts[1])
         
-        # بررسی وجود کاربر
-        cursor = db.conn.cursor()
-        cursor.execute('SELECT user_id FROM users WHERE user_id = ?', (user_id,))
-        if not cursor.fetchone():
+        response = db.supabase.table('users').select('user_id').eq('user_id', user_id).execute()
+        if not response.data:
             db.add_or_update_user(user_id, "", "", "")
         
         if days == 0:
@@ -1874,7 +1770,6 @@ def process_set_vip_time(message):
                     parse_mode='HTML'
                 )
         elif days > 0:
-            # VIP موقت
             if db.set_vip(user_id, True, days):
                 expiry_date = (datetime.now() + timedelta(days=days)).strftime('%Y-%m-%d')
                 try:
@@ -2167,18 +2062,15 @@ def process_message_user_step2(message, user_id):
 # ==================== راه‌اندازی ربات ====================
 def start_bot():
     print("\n" + "=" * 60)
-    print("🚀 در حال راه‌اندازی ربات...")
+    print("🚀 در حال راه‌اندازی ربات با Supabase...")
     print("=" * 60)
     
     try:
-        if os.path.exists(DB_NAME):
-            print(f"✅ دیتابیس موجود ({os.path.getsize(DB_NAME) // 1024} KB) بارگذاری شد")
-        else:
-            print("📁 دیتابیس جدید ایجاد شد")
+        # بررسی اتصال به Supabase
+        db.supabase.table('users').select('count', count='exact').limit(1).execute()
+        print("✅ اتصال به Supabase برقرار است")
         
-        global db
-        db = Database()
-        
+        # اضافه کردن کانال اصلی
         try:
             db.add_required_channel(CHANNEL_USERNAME)
             print(f"✅ کانال اصلی {CHANNEL_USERNAME} اضافه شد")
@@ -2206,7 +2098,7 @@ def start_bot():
         try:
             bot.send_message(
                 ADMIN_ID,
-                f"✅ <b>ربات VIP راه‌اندازی شد!</b>\n\n"
+                f"✅ <b>ربات VIP با Supabase راه‌اندازی شد!</b>\n\n"
                 f"🤖 ربات: @{bot_info.username}\n"
                 f"👥 کاربران: {total_users}\n"
                 f"📥 درخواست‌ها: {total_requests}\n"
