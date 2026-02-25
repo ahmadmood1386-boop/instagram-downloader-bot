@@ -605,7 +605,7 @@ def start_command(message):
             return
         
         user_stats = db.get_user_stats(user.id)
-        remaining, current, total = db.get_remaining_downloads(user.id)  // همیشه 999
+        remaining, current, total = db.get_remaining_downloads(user_id)  # همیشه 999
         
         # متن خوش‌آمدگویی (بدون محدودیت)
         welcome_text = f"""
