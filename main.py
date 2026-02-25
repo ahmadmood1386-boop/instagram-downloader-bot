@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 print("=" * 60)
-print("🤖 ربات دانلودر اینستاگرام - نسخه VIP v4.0 (Supabase)")
+print("🤖 ربات دانلودر اینستاگرام - نسخه VIP v4.0 (بدون محدودیت)")
 print("=" * 60)
 
 # 🔐 اطلاعات ربات
@@ -42,12 +42,10 @@ class Database:
     def add_or_update_user(self, user_id, username, first_name, last_name):
         """اضافه کردن کاربر جدید یا به‌روزرسانی کاربر موجود"""
         try:
-            # بررسی وجود کاربر
             response = self.supabase.table('users').select('*').eq('user_id', user_id).execute()
             existing = response.data
 
             if not existing:
-                # کاربر جدید
                 invite_code = f"INV{user_id}{random.randint(1000, 9999)}"
                 is_vip = 1 if user_id == ADMIN_ID else 0
 
@@ -65,7 +63,6 @@ class Database:
                 logger.info(f"✅ کاربر جدید اضافه شد: {user_id}")
                 return True, "new"
             else:
-                # کاربر موجود - به‌روزرسانی اطلاعات
                 update_data = {
                     'username': username or "",
                     'first_name': first_name or "",
@@ -74,7 +71,6 @@ class Database:
                 }
                 self.supabase.table('users').update(update_data).eq('user_id', user_id).execute()
 
-                # بررسی و ایجاد invite_code اگر وجود ندارد
                 user = existing[0]
                 if not user.get('invite_code'):
                     invite_code = f"INV{user_id}{random.randint(1000, 9999)}"
@@ -104,7 +100,6 @@ class Database:
                             vip_date = datetime.strptime(vip_until, '%Y-%m-%d').date()
                             today = datetime.now().date()
                             if vip_date < today:
-                                # VIP منقضی شده
                                 self.supabase.table('users').update({'is_vip': 0, 'vip_until': None}).eq('user_id', user_id).execute()
                                 return False
                         except:
@@ -146,7 +141,7 @@ class Database:
             return []
 
     def get_user_stats(self, user_id):
-        """دریافت آمار کاربر با بررسی ریست روزانه"""
+        """دریافت آمار کاربر با بررسی ریست روزانه (بدون محدودیت، فقط اطلاعات)"""
         try:
             response = self.supabase.table('users').select('*').eq('user_id', user_id).execute()
             if not response.data:
@@ -154,35 +149,21 @@ class Database:
 
             user = response.data[0]
 
-            # ریست روزانه (فقط برای کاربران غیر VIP)
-            today = datetime.now().date()
-            last_download_date = user.get('last_download_date')
-            if last_download_date and not self.is_vip(user_id):
-                try:
-                    last_date = datetime.strptime(last_download_date, '%Y-%m-%d').date()
-                    if last_date != today:
-                        self.supabase.table('users').update({
-                            'daily_downloads': 0,
-                            'last_download_date': today.isoformat()
-                        }).eq('user_id', user_id).execute()
-                        # به‌روزرسانی مقدار در user
-                        user['daily_downloads'] = 0
-                except:
-                    pass
-
+            # ریست روزانه دیگر انجام نمی‌شود (چون محدودیتی نیست)
+            # اما برای سازگاری کد همان ساختار را برمی‌گردانیم
             return (
                 user.get('user_id'),
                 user.get('username'),
                 user.get('first_name'),
                 user.get('last_name'),
                 user.get('join_date'),
-                user.get('daily_downloads', 0),
+                user.get('daily_downloads', 0),   # دیگر استفاده نمی‌شود
                 user.get('last_download_date'),
                 user.get('total_downloads', 0),
                 user.get('invite_code'),
                 user.get('invited_by', 0),
                 user.get('invite_count', 0),
-                user.get('extra_downloads', 0),
+                user.get('extra_downloads', 0),   # دیگر استفاده نمی‌شود
                 user.get('is_banned', 0),
                 user.get('is_vip', 0),
                 user.get('vip_until'),
@@ -193,78 +174,28 @@ class Database:
             return None
 
     def get_today_downloads(self, user_id):
-        """تعداد دانلودهای امروز کاربر"""
-        try:
-            user_data = self.get_user_stats(user_id)
-            if user_data:
-                return user_data[5] or 0
-            return 0
-        except:
-            return 0
+        """تعداد دانلودهای امروز (همیشه صفر برمی‌گرداند چون محدودیت نداریم)"""
+        return 0
 
     def can_download(self, user_id):
-        """بررسی امکان دانلود"""
-        try:
-            if self.is_vip(user_id):
-                return True
-
-            current_downloads = self.get_today_downloads(user_id)
-            response = self.supabase.table('users').select('extra_downloads').eq('user_id', user_id).execute()
-            extra = response.data[0].get('extra_downloads', 0) if response.data else 0
-            total_allowed = 5 + extra
-            return current_downloads < total_allowed
-        except:
-            return False
+        """همیشه اجازه دانلود بده"""
+        return True
 
     def increment_download(self, user_id):
-        """افزایش تعداد دانلودهای کاربر"""
+        """فقط آمار کل دانلودها را افزایش بده"""
         try:
-            today = datetime.now().date().isoformat()
-
-            if not self.is_vip(user_id):
-                # دریافت last_download_date
-                response = self.supabase.table('users').select('last_download_date').eq('user_id', user_id).execute()
-                last_date = response.data[0].get('last_download_date') if response.data else None
-
-                if last_date != today:
-                    # روز جدید
-                    self.supabase.table('users').update({
-                        'daily_downloads': 1,
-                        'last_download_date': today,
-                        'total_downloads': self.supabase.table('users').select('total_downloads').eq('user_id', user_id).execute().data[0].get('total_downloads', 0) + 1
-                    }).eq('user_id', user_id).execute()
-                else:
-                    # افزایش روزانه
-                    self.supabase.table('users').update({
-                        'daily_downloads': self.supabase.table('users').select('daily_downloads').eq('user_id', user_id).execute().data[0].get('daily_downloads', 0) + 1,
-                        'total_downloads': self.supabase.table('users').select('total_downloads').eq('user_id', user_id).execute().data[0].get('total_downloads', 0) + 1
-                    }).eq('user_id', user_id).execute()
-            else:
-                # فقط total_downloads افزایش
-                current_total = self.supabase.table('users').select('total_downloads').eq('user_id', user_id).execute().data[0].get('total_downloads', 0)
-                self.supabase.table('users').update({'total_downloads': current_total + 1}).eq('user_id', user_id).execute()
-
+            current_total = self.supabase.table('users').select('total_downloads').eq('user_id', user_id).execute()
+            if current_total.data:
+                new_total = current_total.data[0].get('total_downloads', 0) + 1
+                self.supabase.table('users').update({'total_downloads': new_total}).eq('user_id', user_id).execute()
             return True
         except Exception as e:
             logger.error(f"❌ خطا در افزایش دانلود: {e}")
             return False
 
     def get_remaining_downloads(self, user_id):
-        """محاسبه تعداد دانلودهای باقیمانده"""
-        try:
-            if self.is_vip(user_id):
-                return 999, 0, 999
-
-            user_data = self.get_user_stats(user_id)
-            if user_data:
-                current = user_data[5] or 0
-                extra = user_data[11] or 0
-                total_allowed = 5 + extra
-                remaining = max(0, total_allowed - current)
-                return remaining, current, total_allowed
-            return 0, 0, 5
-        except:
-            return 0, 0, 5
+        """همیشه تعداد زیادی باقی‌مانده نشان بده"""
+        return 999, 0, 999
 
     def get_invite_link(self, user_id, bot_username):
         """دریافت لینک دعوت"""
@@ -281,14 +212,13 @@ class Database:
             return f"https://t.me/{bot_username}?start=INV{user_id}{random.randint(1000, 9999)}"
 
     def add_invite_reward(self, inviter_id):
-        """اضافه کردن پاداش دعوت"""
+        """اضافه کردن پاداش دعوت (اکنون فقط آمار دعوت را افزایش می‌دهد)"""
         try:
-            response = self.supabase.table('users').select('invite_count, extra_downloads').eq('user_id', inviter_id).execute()
+            response = self.supabase.table('users').select('invite_count').eq('user_id', inviter_id).execute()
             if response.data:
                 current = response.data[0]
                 self.supabase.table('users').update({
-                    'invite_count': current.get('invite_count', 0) + 1,
-                    'extra_downloads': current.get('extra_downloads', 0) + 20
+                    'invite_count': current.get('invite_count', 0) + 1
                 }).eq('user_id', inviter_id).execute()
                 return True
             return False
@@ -307,7 +237,6 @@ class Database:
                 'channel_link': channel_link,
                 'is_active': 1
             }
-            # استفاده از upsert (بر اساس unique constraint روی channel_username)
             self.supabase.table('required_channels').upsert(data, on_conflict='channel_username').execute()
             return True
         except Exception as e:
@@ -355,7 +284,6 @@ class Database:
         """دریافت تمام کاربران"""
         try:
             response = self.supabase.table('users').select('*').order('join_date', desc=True).execute()
-            # تبدیل به تاپل مانند قبل (برای سازگاری با کدهای موجود)
             users = []
             for u in response.data:
                 users.append((
@@ -384,19 +312,15 @@ class Database:
     def get_total_stats(self):
         """دریافت آمار کلی (رفع مشکل count)"""
         try:
-            # دریافت تمام کاربران و شمارش با len
             users_resp = self.supabase.table('users').select('*').execute()
             total_users = len(users_resp.data)
 
-            # دریافت تمام درخواست‌ها و شمارش با len
             requests_resp = self.supabase.table('requests').select('*').execute()
             total_requests = len(requests_resp.data)
 
-            # جمع کل دانلودها
             downloads_resp = self.supabase.table('users').select('total_downloads').execute()
             total_downloads = sum(u.get('total_downloads', 0) for u in downloads_resp.data)
 
-            # شمارش VIP‌ها با len
             vip_resp = self.supabase.table('users').select('*').eq('is_vip', 1).execute()
             total_vip = len(vip_resp.data)
 
@@ -406,22 +330,15 @@ class Database:
             return 0, 0, 0, 0
 
     def reset_user_downloads(self, user_id):
-        """ریست دانلودهای کاربر"""
-        try:
-            self.supabase.table('users').update({'daily_downloads': 0}).eq('user_id', user_id).execute()
-            return True
-        except Exception as e:
-            logger.error(f"❌ خطا در ریست دانلودها: {e}")
-            return False
+        """ریست دانلودهای کاربر (دیگر کاربردی ندارد)"""
+        return True
 
     def backup_database(self):
-        """پشتیبان‌گیری (در Supabase معنی ندارد، می‌توان از export استفاده کرد)"""
+        """پشتیبان‌گیری (در Supabase معنی ندارد)"""
         logger.warning("⚠️ پشتیبان‌گیری در Supabase از طریق کد ممکن نیست. لطفاً از داشبورد Supabase استفاده کنید.")
         return None
 
 # ==================== بقیه کد بدون تغییر ====================
-# (از اینجا به بعد تمام توابع و کلاس‌ها دقیقاً مانند قبل هستند)
-
 # ایجاد اتصال دیتابیس
 db = Database()
 import telebot
@@ -639,7 +556,6 @@ def start_command(message):
         if len(message.text.split()) > 1:
             invite_code = message.text.split()[1]
             if invite_code.startswith("INV"):
-                # پیدا کردن inviter از طریق invite_code
                 response = db.supabase.table('users').select('user_id').eq('invite_code', invite_code).execute()
                 if response.data:
                     inviter_id = response.data[0]['user_id']
@@ -650,7 +566,7 @@ def start_command(message):
                                     f"🎉 <b>دوست شما با لینک دعوت شما وارد شد!</b>\n\n"
                                     f"👤 کاربر: {user.first_name}\n"
                                     f"🆔 آیدی: {user.id}\n"
-                                    f"🎁 <b>20 دانلود اضافی دریافت کردید!</b>")
+                                    f"🎁 <b>یک دعوت به آمار شما اضافه شد!</b>")
                             except:
                                 pass
         
@@ -689,18 +605,9 @@ def start_command(message):
             return
         
         user_stats = db.get_user_stats(user.id)
+        remaining, current, total = db.get_remaining_downloads(user.id)  // همیشه 999
         
-        if user_stats:
-            remaining, current, total = db.get_remaining_downloads(user.id)
-        else:
-            remaining, current, total = 5, 0, 5
-        
-        # متن مخصوص VIP یا عادی
-        if db.is_vip(user.id):
-            status_text = "⭐ <b>وضعیت: کاربر ویژه (دانلود نامحدود)</b>"
-        else:
-            status_text = f"📥 <b>وضعیت دانلود امروز:</b>\n├ دانلود شده: {current} از {total}\n└ باقی مانده: {remaining}"
-        
+        # متن خوش‌آمدگویی (بدون محدودیت)
         welcome_text = f"""
 ✨ <b>سلام {user.first_name} عزیز!</b>
 
@@ -709,9 +616,7 @@ def start_command(message):
 <b>🚀 ویژگی‌های ربات:</b>
 ✅ دانلود پست، ریلس، استوری
 ✅ کیفیت اصلی بدون افت
-✅ دانلود نامحدود برای کاربران ویژه
-
-{status_text}
+✅ **بدون هیچ محدودیتی در دانلود!**
 
 <b>💡 نحوه استفاده:</b>
 ۱. لینک پست اینستاگرام را کپی کنید
@@ -941,42 +846,16 @@ def handle_messages(message):
         
         # پردازش منوها
         if text == "🌐 دانلود از اینستاگرام":
-            if db.is_vip(user_id):
-                bot.reply_to(
-                    message,
-                    f"⭐ <b>سیستم دانلود VIP فعال</b>\n\n"
-                    f"🎉 شما کاربر ویژه هستید و دانلود نامحدود دارید!\n\n"
-                    f"🔗 <b>لطفاً لینک اینستاگرام را ارسال کنید:</b>\n\n"
-                    f"مثال: https://www.instagram.com/p/...\n"
-                    f"یا https://www.instagram.com/reel/...",
-                    parse_mode='HTML'
-                )
-            else:
-                remaining, current, total = db.get_remaining_downloads(user_id)
-                
-                if remaining > 0:
-                    bot.reply_to(
-                        message,
-                        f"📥 <b>سیستم دانلود فعال</b>\n\n"
-                        f"📊 <b>وضعیت امروز:</b>\n"
-                        f"├ دانلودها: {current}/{total}\n"
-                        f"└ باقیمانده: {remaining}\n\n"
-                        f"🔗 <b>لطفاً لینک اینستاگرام را ارسال کنید:</b>\n\n"
-                        f"مثال: https://www.instagram.com/p/...\n"
-                        f"یا https://www.instagram.com/reel/...",
-                        parse_mode='HTML'
-                    )
-                else:
-                    invite_link = db.get_invite_link(user_id, bot.get_me().username)
-                    bot.reply_to(
-                        message,
-                        f"😔 <b>دانلودهای امروزت تموم شد!</b>\n\n"
-                        f"🎁 <b>با دعوت دوستان ۲۰ دانلود اضافی بگیر!</b>\n\n"
-                        f"🔗 <b>لینک دعوت شما:</b>\n"
-                        f"<code>{invite_link}</code>\n\n"
-                        f"📱 هر دوست که با این لینک بیاد، ۲۰ دانلود اضافی میگیری!",
-                        parse_mode='HTML'
-                    )
+            # بدون هیچ محدودیتی، مستقیماً لینک بخواه
+            bot.reply_to(
+                message,
+                f"📥 <b>سیستم دانلود فعال</b>\n\n"
+                f"🎉 شما می‌توانید بدون محدودیت دانلود کنید!\n\n"
+                f"🔗 <b>لطفاً لینک اینستاگرام را ارسال کنید:</b>\n\n"
+                f"مثال: https://www.instagram.com/p/...\n"
+                f"یا https://www.instagram.com/reel/...",
+                parse_mode='HTML'
+            )
         
         elif text == "📊 آمار کاربری من":
             user = message.from_user
@@ -991,6 +870,7 @@ def handle_messages(message):
                 else:
                     join_date = 'جدید'
                     
+                # remaining و current دیگر معنی ندارند، اما برای سازگاری
                 remaining, current, total = db.get_remaining_downloads(user.id)
                 is_vip = db.is_vip(user.id)
                 
@@ -1013,21 +893,15 @@ def handle_messages(message):
                 
                 stats_text += f"""
 <b>📥 آمار دانلود:</b>
-├ امروز: {current} از {total}
-├ کل: {user_stats[7] or 0}
+├ کل دانلودها: {user_stats[7] or 0}
 ├ دعوت‌ها: {user_stats[10] or 0}
-└ دانلود اضافی: {user_stats[11] or 0}
+└ وضعیت: نامحدود
 
-"""
-                
-                if not is_vip:
-                    stats_text += f"<b>🎯 باقیمانده امروز: {remaining}</b>\n\n"
-                
-                stats_text += f"🔗 <b>کانال ما:</b> {CHANNEL_USERNAME}"
+🔗 <b>کانال ما:</b> {CHANNEL_USERNAME}
+                """
                 
                 bot.reply_to(message, stats_text, parse_mode='HTML')
             else:
-                remaining, current, total = db.get_remaining_downloads(user.id)
                 stats_text = f"""
 📊 <b>آمار کاربری شما</b>
 
@@ -1038,12 +912,9 @@ def handle_messages(message):
 └ عضویت: امروز
 
 <b>📥 آمار دانلود:</b>
-├ امروز: {current} از {total}
-├ کل: 0
+├ کل دانلودها: 0
 ├ دعوت‌ها: 0
-└ دانلود اضافی: 0
-
-<b>🎯 باقیمانده امروز: {remaining}</b>
+└ وضعیت: نامحدود
 
 🔗 <b>کانال ما:</b> {CHANNEL_USERNAME}
                 """
@@ -1085,26 +956,16 @@ def handle_messages(message):
 ۲. در ربات ارسال کنید (پیست کنید)
 ۳. منتظر دانلود باشید
 
-<b>📊 سیستم دانلود:</b>
-• روزانه ۵ دانلود رایگان
-• هر دعوت = ۲۰ دانلود اضافی
-• کاربران ویژه: دانلود نامحدود
-• محدودیت روزانه هر شب ساعت ۱۲ ریست می‌شود
+<b>🚀 ویژگی‌ها:</b>
+• بدون هیچ محدودیتی در تعداد دانلود
+• کیفیت اصلی
+• پشتیبانی از پست، ریلس، استوری
 
 <b>🎁 سیستم دعوت:</b>
-هر دوستی که با لینک شما بیاید:
-├ ۲۰ دانلود اضافی برای شما
-└ ۵ دانلود رایگان برای دوست شما
+هر دوستی که با لینک شما بیاید، یک دعوت به آمار شما اضافه می‌شود.
 
-<b>⭐ سیستم کاربر ویژه:</b>
-• فقط توسط ادمین قابل فعال‌سازی
-• دانلود نامحدود
-• بدون نیاز به دعوت دوستان
-
-<b>⚠️ نکات مهم:</b>
-• از لینک اصلی اینستاگرام استفاده کنید
-• پست‌های خصوصی قابل دانلود نیستند
-• برای پست‌های طولانی صبر کنید
+<b>⭐ کاربر ویژه:</b>
+فقط برای نمایش – همه کاربران عملاً ویژه هستند.
 
 <b>🆘 پشتیبانی:</b> {SUPPORT_USERNAME}
 <b>📢 کانال:</b> {CHANNEL_USERNAME}
@@ -1131,14 +992,14 @@ def handle_messages(message):
             bot.reply_to(
                 message,
                 f"📣 <b>سیستم دعوت دوستان</b>\n\n"
-                f"🎁 <b>هر دعوت = ۲۰ دانلود اضافی!</b>\n\n"
+                f"🎁 <b>با دعوت دوستان، آمار دعوت‌های شما افزایش می‌یابد!</b>\n\n"
                 f"🔗 <b>لینک اختصاصی شما:</b>\n"
                 f"<code>{invite_link}</code>\n\n"
                 f"📊 <b>دعوت‌های شما:</b> {invite_count} نفر\n\n"
                 f"💡 <b>روش استفاده:</b>\n"
                 f"۱. این لینک را برای دوستان بفرستید\n"
                 f"۲. دوستان روی لینک کلیک کنند\n"
-                f"۳. شما ۲۰ دانلود اضافی دریافت می‌کنید\n\n"
+                f"۳. دعوت شما ثبت می‌شود\n\n"
                 f"🔗 <b>کانال ما:</b> {CHANNEL_USERNAME}",
                 reply_markup=keyboard,
                 parse_mode='HTML'
@@ -1156,26 +1017,7 @@ def handle_messages(message):
                 )
                 return
             
-            if not db.can_download(user_id):
-                invite_link = db.get_invite_link(user_id, bot.get_me().username)
-                keyboard = types.InlineKeyboardMarkup()
-                keyboard.add(types.InlineKeyboardButton(
-                    "📱 اشتراک‌گذاری لینک", 
-                    url=f"https://t.me/share/url?url={invite_link}&text=🎉 ربات دانلودر اینستاگرام!"
-                ))
-                
-                bot.reply_to(
-                    message,
-                    f"😔 <b>دانلودهای امروزت تموم شد!</b>\n\n"
-                    f"🎁 <b>با دعوت دوستان ۲۰ دانلود اضافی بگیر!</b>\n\n"
-                    f"🔗 <b>لینک دعوت:</b>\n"
-                    f"<code>{invite_link}</code>\n\n"
-                    f"📊 هر دعوت = ۲۰ دانلود اضافی",
-                    reply_markup=keyboard,
-                    parse_mode='HTML'
-                )
-                return
-            
+            # همیشه اجازه دانلود داده می‌شود
             processing_msg = bot.reply_to(
                 message,
                 "⏳ <b>در حال پردازش لینک...</b>\n\n"
@@ -1244,32 +1086,13 @@ def handle_messages(message):
                         continue
                 
                 if files_sent > 0:
-                    remaining, current, total = db.get_remaining_downloads(user_id)
-                    
-                    if db.is_vip(user_id):
-                        success_text = f"""
+                    success_text = f"""
 ✨ <b>عملیات دانلود با موفقیت انجام شد!</b>
-
-⭐ <b>وضعیت: کاربر ویژه (دانلود نامحدود)</b>
 
 ✅ <b>{files_sent} فایل ارسال شد.</b>
 
 🔗 {CHANNEL_USERNAME}
-                        """
-                    else:
-                        success_text = f"""
-✨ <b>عملیات دانلود با موفقیت انجام شد!</b>
-
-📊 <b>وضعیت دانلود شما:</b>
-├ امروز: {current} از {total}
-└ باقیمانده: {remaining}
-
-✅ <b>{files_sent} فایل ارسال شد.</b>
-
-🎁 <b>با دعوت دوستان دانلودهای بیشتری دریافت کنید!</b>
-
-🔗 {CHANNEL_USERNAME}
-                        """
+                    """
                     
                     bot.send_message(
                         message.chat.id,
@@ -1444,7 +1267,7 @@ def handle_callbacks(call):
 • تنظیم مدت VIP
 • مشاهده لیست VIP‌ها
 
-<b>⚠️ توجه:</b> کاربران ویژه دانلود نامحدود دارند.
+<b>⚠️ توجه:</b> کاربران ویژه فقط برای نمایش هستند (همه عملاً ویژه‌اند).
                 """
                 
                 bot.edit_message_text(
@@ -1499,7 +1322,7 @@ def handle_callbacks(call):
                             user_id,
                             "⚠️ <b>وضعیت VIP شما تغییر کرد!</b>\n\n"
                             "❌ وضعیت کاربر ویژه شما توسط مدیریت غیرفعال شد.\n"
-                            "📊 اکنون مانند کاربران عادی محدودیت دانلود دارید."
+                            "(توجه: این تغییر تأثیری در دانلود ندارد و همه کاربران نامحدود هستند.)"
                         )
                     except:
                         pass
@@ -1691,7 +1514,6 @@ def process_add_vip(message):
     try:
         user_id = int(message.text)
         
-        # بررسی وجود کاربر
         response = db.supabase.table('users').select('user_id').eq('user_id', user_id).execute()
         if not response.data:
             db.add_or_update_user(user_id, "", "", "")
@@ -1702,10 +1524,9 @@ def process_add_vip(message):
                     user_id,
                     "🎉 <b>تبریک! شما کاربر ویژه شدید!</b>\n\n"
                     "⭐ <b>امتیازات کاربر ویژه:</b>\n"
-                    "• دانلود نامحدود از اینستاگرام\n"
-                    "• بدون نیاز به دعوت دوستان\n"
-                    "• بدون محدودیت روزانه\n\n"
-                    "✨ از امکانات ویژه ربات لذت ببرید!"
+                    "• نشان ویژه در پروفایل شما\n"
+                    "• (توجه: همه کاربران عملاً ویژه هستند و محدودیتی ندارند)\n\n"
+                    "✨ از ربات لذت ببرید!"
                 )
             except:
                 pass
@@ -1713,7 +1534,7 @@ def process_add_vip(message):
             bot.send_message(
                 message.chat.id,
                 f"✅ <b>کاربر {user_id} با موفقیت VIP شد!</b>\n\n"
-                f"⭐ کاربر اکنون دسترسی نامحدود دارد.",
+                f"⭐ کاربر اکنون نشان ویژه دارد.",
                 reply_markup=glass_effect_admin_panel(),
                 parse_mode='HTML'
             )
@@ -1760,9 +1581,8 @@ def process_set_vip_time(message):
                         user_id,
                         "🎉 <b>تبریک! شما کاربر ویژه دائمی شدید!</b>\n\n"
                         "⭐ <b>امتیازات:</b>\n"
-                        "• دانلود نامحدود دائمی\n"
-                        "• بدون محدودیت\n\n"
-                        "✨ مادامی که ربات فعال است، VIP هستید!"
+                        "• نشان ویژه دائمی\n\n"
+                        "✨ از ربات لذت ببرید!"
                     )
                 except:
                     pass
@@ -1781,10 +1601,9 @@ def process_set_vip_time(message):
                         user_id,
                         f"🎉 <b>تبریک! شما کاربر ویژه شدید!</b>\n\n"
                         f"⭐ <b>امتیازات:</b>\n"
-                        f"• دانلود نامحدود\n"
-                        f"• بدون محدودیت روزانه\n"
+                        f"• نشان ویژه\n"
                         f"• اعتبار تا: {expiry_date}\n\n"
-                        f"✨ از امکانات ویژه ربات لذت ببرید!"
+                        f"✨ از ربات لذت ببرید!"
                     )
                 except:
                     pass
@@ -1952,31 +1771,13 @@ def process_reset_user(message):
     
     try:
         user_id = int(message.text)
-        if db.reset_user_downloads(user_id):
-            try:
-                bot.send_message(
-                    user_id,
-                    "🔄 <b>ریست دانلود</b>\n\n"
-                    "✅ دانلودهای روزانه شما توسط مدیریت ریست شد!\n\n"
-                    "📥 اکنون می‌توانید دانلود کنید.",
-                    parse_mode='HTML'
-                )
-            except:
-                pass
-            
-            bot.send_message(
-                message.chat.id,
-                f"✅ <b>دانلودهای کاربر {user_id} ریست شد!</b>",
-                reply_markup=glass_effect_admin_panel(),
-                parse_mode='HTML'
-            )
-        else:
-            bot.send_message(
-                message.chat.id,
-                "❌ <b>خطا در ریست کاربر!</b>",
-                reply_markup=glass_effect_admin_panel(),
-                parse_mode='HTML'
-            )
+        # ریست کردن معنایی ندارد، اما برای جلوگیری از خطا True برمی‌گردانیم
+        bot.send_message(
+            message.chat.id,
+            f"✅ <b>عملیات ریست برای کاربر {user_id} انجام شد (بدون تأثیر).</b>",
+            reply_markup=glass_effect_admin_panel(),
+            parse_mode='HTML'
+        )
     except:
         bot.send_message(
             message.chat.id,
@@ -2066,15 +1867,13 @@ def process_message_user_step2(message, user_id):
 # ==================== راه‌اندازی ربات ====================
 def start_bot():
     print("\n" + "=" * 60)
-    print("🚀 در حال راه‌اندازی ربات با Supabase...")
+    print("🚀 در حال راه‌اندازی ربات با Supabase (بدون محدودیت)...")
     print("=" * 60)
     
     try:
-        # بررسی اتصال به Supabase
         db.supabase.table('users').select('count', count='exact').limit(1).execute()
         print("✅ اتصال به Supabase برقرار است")
         
-        # اضافه کردن کانال اصلی
         try:
             db.add_required_channel(CHANNEL_USERNAME)
             print(f"✅ کانال اصلی {CHANNEL_USERNAME} اضافه شد")
@@ -2093,16 +1892,15 @@ def start_bot():
         print(f"⏰ زمان: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print("=" * 60)
         print("\n📱 ربات آنلاین و آماده است!")
-        print("⭐ ویژگی جدید: سیستم کاربران ویژه")
+        print("⭐ ویژگی: حذف محدودیت دانلود برای همه کاربران")
         print("💡 دستورات:")
         print("   /start - شروع ربات")
         print("=" * 60)
         
-        # ارسال پنل مدیریت به ادمین
         try:
             bot.send_message(
                 ADMIN_ID,
-                f"✅ <b>ربات VIP با Supabase راه‌اندازی شد!</b>\n\n"
+                f"✅ <b>ربات با حذف محدودیت راه‌اندازی شد!</b>\n\n"
                 f"🤖 ربات: @{bot_info.username}\n"
                 f"👥 کاربران: {total_users}\n"
                 f"📥 درخواست‌ها: {total_requests}\n"
