@@ -50,13 +50,16 @@ class Database:
 
     # -------------------- کاربران --------------------
     def add_or_update_user(self, user_id, username, first_name, last_name):
-        """اضافه کردن کاربر جدید یا به‌روزرسانی کاربر موجود"""
+        """اضافه کردن کاربر جدید یا به‌روزرسانی کاربر موجود (با لاگ‌های زیاد)"""
         try:
+            logger.info(f"🔄 تلاش برای افزودن/به‌روزرسانی کاربر {user_id}")
             response = self.supabase.table('users').select('*').eq('user_id', user_id).execute()
             existing = response.data
+            logger.info(f"📡 پاسخ دیتابیس برای کاربر {user_id}: {existing}")
 
             if not existing:
                 # کاربر جدید
+                logger.info(f"👤 کاربر {user_id} وجود ندارد، در حال ایجاد...")
                 invite_code = f"INV{user_id}{random.randint(1000, 9999)}"
                 is_vip = 1 if user_id == ADMIN_ID else 0
 
@@ -70,11 +73,14 @@ class Database:
                     'join_date': datetime.now().isoformat(),
                     'updated_at': datetime.now().isoformat()
                 }
-                self.supabase.table('users').insert(data).execute()
+                logger.info(f"📦 داده‌های کاربر جدید: {data}")
+                insert_resp = self.supabase.table('users').insert(data).execute()
+                logger.info(f"✅ نتیجه درج: {insert_resp}")
                 logger.info(f"✅ کاربر جدید اضافه شد: {user_id}")
                 return True, "new"
             else:
-                # کاربر موجود - به‌روزرسانی اطلاعات
+                # کاربر موجود
+                logger.info(f"👤 کاربر {user_id} وجود دارد، در حال به‌روزرسانی...")
                 update_data = {
                     'username': username or "",
                     'first_name': first_name or "",
@@ -82,11 +88,13 @@ class Database:
                     'updated_at': datetime.now().isoformat()
                 }
                 self.supabase.table('users').update(update_data).eq('user_id', user_id).execute()
+                logger.info(f"✅ اطلاعات کاربر {user_id} به‌روز شد.")
 
                 user = existing[0]
                 if not user.get('invite_code'):
                     invite_code = f"INV{user_id}{random.randint(1000, 9999)}"
                     self.supabase.table('users').update({'invite_code': invite_code}).eq('user_id', user_id).execute()
+                    logger.info(f"🔑 کد دعوت برای کاربر {user_id} ساخته شد: {invite_code}")
 
                 logger.info(f"✅ کاربر به‌روز شد: {user_id}")
                 return False, "updated"
@@ -348,15 +356,15 @@ class Database:
 
     def backup_database(self):
         """پشتیبان‌گیری (در Supabase معنی ندارد)"""
-        logger.warning("⚠️ پشتیبان‌گیری در Supabase از طریق کد ممکن نیست. لطفاً از داشبورد Supabase استفاده کنید.")
+        logger.warning("⚠️ پشتیبان‌گیری در Supabase از طریق کد ممکن نیست. لطفاً از داشبورد Supabase برای پشتیبان‌گیری استفاده کنید.")
         return None
 
-# ==================== بقیه کد ====================
+# ==================== بقیه کد بدون تغییر ====================
 db = Database()
 import telebot
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 
-# ==================== سیستم عضویت اجباری ====================
+# ==================== سیستم عضویت اجباری هوشمند ====================
 def check_subscription(user_id):
     try:
         required_channels = db.get_required_channels()
@@ -528,7 +536,7 @@ def start_command(message):
             return
         
         user_stats = db.get_user_stats(user.id)
-        remaining, current, total = db.get_remaining_downloads(user.id)  # اصلاح شده: user.id بجای user_id
+        remaining, current, total = db.get_remaining_downloads(user.id)
         
         welcome_text = f"""
 ✨ <b>سلام {user.first_name} عزیز!</b>
