@@ -382,19 +382,23 @@ class Database:
             return []
 
     def get_total_stats(self):
-        """دریافت آمار کلی"""
+        """دریافت آمار کلی (رفع مشکل count)"""
         try:
-            users_resp = self.supabase.table('users').select('*', count='exact').execute()
-            total_users = users_resp.count if hasattr(users_resp, 'count') else len(users_resp.data)
+            # دریافت تمام کاربران و شمارش با len
+            users_resp = self.supabase.table('users').select('*').execute()
+            total_users = len(users_resp.data)
 
-            requests_resp = self.supabase.table('requests').select('*', count='exact').execute()
-            total_requests = requests_resp.count if hasattr(requests_resp, 'count') else len(requests_resp.data)
+            # دریافت تمام درخواست‌ها و شمارش با len
+            requests_resp = self.supabase.table('requests').select('*').execute()
+            total_requests = len(requests_resp.data)
 
+            # جمع کل دانلودها
             downloads_resp = self.supabase.table('users').select('total_downloads').execute()
             total_downloads = sum(u.get('total_downloads', 0) for u in downloads_resp.data)
 
-            vip_resp = self.supabase.table('users').select('*', count='exact').eq('is_vip', 1).execute()
-            total_vip = vip_resp.count if hasattr(vip_resp, 'count') else len(vip_resp.data)
+            # شمارش VIP‌ها با len
+            vip_resp = self.supabase.table('users').select('*').eq('is_vip', 1).execute()
+            total_vip = len(vip_resp.data)
 
             return total_users, total_requests, total_downloads, total_vip
         except Exception as e:
